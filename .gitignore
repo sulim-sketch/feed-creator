@@ -1,0 +1,51 @@
+# Environment variables (API keys)
+.env
+.env.*
+
+# Python virtual environment
+venv/
+.venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# IDE / editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code settings
+.claude/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Output / data files (scraped results)
+*_news.json
+*_news_body.json
+*_filtered_news.json
+*_news_raw.json
+*_after_close_news.json
+*_after_close_news_body.json
+
+# Excel / reference data
+*.xlsx
+*.xls
+
+# Generated reports
+portfolio_returns_*.md
