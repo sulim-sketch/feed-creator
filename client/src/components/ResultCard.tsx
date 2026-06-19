@@ -54,26 +54,26 @@ export default function ResultCard({ result }: ResultCardProps) {
           <div className={styles.sectionHead}>
             <span className={styles.platform}>X / Twitter</span>
             <div className={styles.sectionActions}>
-              <span className={styles.charCount}>{result.summary_x.length} chars</span>
+              <span className={styles.charCount}>{(result.summary_x ?? '').length} chars</span>
               <button className={styles.copyBtn} onClick={() => copy(result.summary_x, 'x')}>
                 {copied === 'x' ? '✓ Copied' : 'Copy'}
               </button>
             </div>
           </div>
-          <p className={styles.summaryText}>{result.summary_x}</p>
+          <p className={styles.summaryText}>{result.summary_x ?? ''}</p>
         </div>
 
         <div className={styles.section}>
           <div className={styles.sectionHead}>
             <span className={styles.platform}>LinkedIn</span>
             <div className={styles.sectionActions}>
-              <span className={styles.charCount}>{result.summary_linkedin.length} chars</span>
-              <button className={styles.copyBtn} onClick={() => copy(result.summary_linkedin, 'linkedin')}>
+              <span className={styles.charCount}>{(result.summary_linkedin ?? '').length} chars</span>
+              <button className={styles.copyBtn} onClick={() => copy(result.summary_linkedin ?? '', 'linkedin')}>
                 {copied === 'linkedin' ? '✓ Copied' : 'Copy'}
               </button>
             </div>
           </div>
-          <p className={styles.summaryText}>{result.summary_linkedin}</p>
+          <p className={styles.summaryText}>{result.summary_linkedin ?? ''}</p>
         </div>
       </div>
 
