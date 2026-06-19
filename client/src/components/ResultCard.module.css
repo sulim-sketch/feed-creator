@@ -1,0 +1,130 @@
+.card {
+  margin-top: 20px;
+  border: 1px solid #dce3ed;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-bottom: 1px solid #dce3ed;
+  background: #f8fafc;
+}
+.ticker {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f1a2e;
+}
+.returnBadge {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0a9e5c;
+  background: rgba(10,158,92,.08);
+  padding: 2px 9px;
+  border-radius: 10px;
+}
+.label {
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: #8a9ab0;
+  margin-left: auto;
+}
+
+.sections {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+.section {
+  padding: 18px 20px;
+  border-right: 1px solid #dce3ed;
+}
+.section:last-child {
+  border-right: none;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.platform {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #5a7090;
+}
+.sectionActions {
+  display: flex; align-items: center; gap: 8px;
+}
+.charCount {
+  font-size: 11px; color: #8a9ab0;
+}
+.copyBtn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid #dce3ed;
+  background: #fff;
+  color: #5a7090;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s, color .15s;
+}
+.copyBtn:hover { background: #eef1f6; color: #0f1a2e; }
+
+.summaryText {
+  font-size: 13px;
+  line-height: 1.75;
+  color: #2a3a50;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.articlesToggle {
+  width: 100%;
+  padding: 10px 20px;
+  text-align: left;
+  font-size: 12px;
+  color: #5a7090;
+  background: #f8fafc;
+  border: none;
+  border-top: 1px solid #dce3ed;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background .15s;
+}
+.articlesToggle:hover { background: #eef1f6; }
+
+.articleList {
+  list-style: none;
+  padding: 12px 20px;
+  margin: 0;
+  border-top: 1px solid #dce3ed;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.articleItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.articleTitle {
+  font-size: 12px;
+  color: #2e5da8;
+  text-decoration: none;
+  line-height: 1.5;
+}
+.articleTitle:hover { text-decoration: underline; }
+.articleMeta {
+  font-size: 11px;
+  color: #8a9ab0;
+}

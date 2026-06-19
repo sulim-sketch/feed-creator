@@ -24,7 +24,7 @@ _genai = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 ET = ZoneInfo("America/New_York")
 API_BASE = "https://coresixteen-api-732000271547.asia-northeast3.run.app"
-NEWS_TARGET = 20
+NEWS_TARGET = 50
 EXCLUDE_PUBLISHER = "barrons.com"
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -36,54 +36,23 @@ UA = (
 def resolve_trading_date(arg: str | None) -> date:
     if arg:
         return date.fromisoformat(arg)
-    d = date.today()
-    while d.weekday() >= 5:
-        d -= timedelta(days=1)
-    return d
+    start = (date.today() - timedelta(days=7)).isoformat()
+    end   = date.today().isoformat()
+    prices = yf.download("SPY", start=start, end=end, auto_adjust=True, progress=False)["Close"]
+    return prices.index[-1].date()
 
 
-# ── 2. 포트폴리오 티커 조회 ────────────────────────────────────────────────────
-def fetch_tickers() -> list[str]:
-    res = requests.get(f"{API_BASE}/bobp/last-portfolio-returns?exclude=BIL", timeout=15)
-    res.raise_for_status()
-    return [item["ticker"] for item in res.json()["items"]]
-
-
-# ── 3. 종목 선정 ──────────────────────────────────────────────────────────────
-def select_ticker(tickers: list[str], trading_date: date) -> tuple[str, float] | None:
-    start = (trading_date - timedelta(days=14)).isoformat()
-    end   = (trading_date + timedelta(days=1)).isoformat()
-    raw = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)["Close"]
-    df = raw if hasattr(raw, "columns") else raw.to_frame()
-
-    day_str  = trading_date.isoformat()
-    available = [d for d in df.index if str(d.date()) <= day_str]
+# ── 2. 일간 수익률 계산 ────────────────────────────────────────────────────────
+def get_daily_return(ticker: str, trading_date: date) -> float:
+    start = (trading_date - timedelta(days=7)).isoformat()
+    end   = date.today().isoformat()
+    raw   = yf.download([ticker], start=start, end=end, auto_adjust=True, progress=False)["Close"]
+    df    = raw if hasattr(raw, "columns") else raw.to_frame()
+    available = [d for d in df.index if d.date() <= trading_date]
     if len(available) < 2:
-        raise ValueError(f"수익률 계산에 충분한 데이터 없음 ({trading_date})")
-
+        return 0.0
     daily = ((df.loc[available[-1]] - df.loc[available[-2]]) / df.loc[available[-2]] * 100).dropna()
-
-    # 1순위: 오늘 상승률 1위가 8% 이상
-    best = str(daily.idxmax())
-    best_ret = float(daily[best])
-    if best_ret >= 8.0:
-        print(f"  -> 1순위 조건 충족: {best} ({best_ret:+.2f}%)")
-        return best, best_ret
-
-    # 2순위: 최근 5 영업일 20% 이상 상승 종목 중 오늘 상승률 최고
-    print(f"  -> 1순위 미충족 (최고 {best_ret:+.2f}%), 2순위 조건 탐색...")
-    if len(available) >= 6:
-        five_day = ((df.loc[available[-1]] - df.loc[available[-6]]) / df.loc[available[-6]] * 100).dropna()
-        qualified = five_day[five_day >= 20.0]
-        if not qualified.empty:
-            candidates = daily[daily.index.isin(qualified.index)]
-            if not candidates.empty:
-                pick = str(candidates.idxmax())
-                pick_ret = float(candidates[pick])
-                print(f"  -> 2순위 조건 충족: {pick} ({pick_ret:+.2f}%, 5일 수익률 {five_day[pick]:+.2f}%)")
-                return pick, pick_ret
-
-    return None
+    return round(float(daily.get(ticker, 0.0)), 2)
 
 
 # ── 4. Yahoo Finance 뉴스 스크래핑 ────────────────────────────────────────────
@@ -108,7 +77,7 @@ def scrape_news(page, ticker: str, target: int) -> list[dict]:
             href = a_tag.get_attribute("href") or ""
             url = href if href.startswith("http") else f"https://finance.yahoo.com{href}"
             publisher = pub_div.inner_text().split("•")[0].strip() if pub_div else ""
-            if url in seen or EXCLUDE_PUBLISHER.lower() in publisher.lower():
+            if url in seen:
                 continue
             seen.add(url)
             articles.append({"title": title, "url": url, "publisher": publisher})
@@ -141,15 +110,17 @@ def fetch_published_at(url: str) -> datetime | None:
 
 def filter_after_close(articles: list[dict], trading_date: date) -> list[dict]:
     market_close = datetime(trading_date.year, trading_date.month, trading_date.day, 16, 0, 0, tzinfo=ET)
+    cutoff       = datetime(trading_date.year, trading_date.month, trading_date.day, 21, 0, 0, tzinfo=ET)
     result = []
     for a in articles:
         pub = fetch_published_at(a["url"])
         if pub is None:
             print(f"    날짜 없음: {a['title'][:55]}")
             continue
-        flag = "✓" if pub > market_close else "✗"
+        in_window = market_close < pub <= cutoff
+        flag = "✓" if in_window else "✗"
         print(f"    {flag} {pub.strftime('%Y-%m-%d %H:%M ET')} | {a['title'][:50]}")
-        if pub > market_close:
+        if in_window:
             result.append({**a, "published_et": pub.isoformat()})
     return result
 
@@ -172,23 +143,41 @@ def fetch_body(page, url: str) -> str:
 
 
 # ── 8. Gemma 요약 ─────────────────────────────────────────────────────────────
-def summarize_reason(ticker: str, articles: list[dict]) -> str:
+def _parse_versions(text: str) -> dict:
+    def extract(marker: str) -> str:
+        m = re.search(rf'---{marker}---\n(.*?)---END {marker}---', text, re.DOTALL)
+        raw = m.group(1).strip() if m else text.strip()
+        paragraphs = [p.strip() for p in re.split(r'\n{2,}', raw) if p.strip()]
+        return '\n\n'.join(paragraphs)
+    return {"x": extract("X"), "linkedin": extract("LINKEDIN")}
+
+
+def summarize_reason(ticker: str, articles: list[dict]) -> dict:
     combined = "\n\n---\n\n".join(
-        f"[{a['title']}]\n{a['body']}" for a in articles if a.get("body")
+        f"[{a['title']}]\n{a['body']}" for a in articles
+        if a.get("body") and EXCLUDE_PUBLISHER.lower() not in a.get("publisher", "").lower()
     )
     prompt = (
-        f"The following are news articles published after market close about {ticker} stock, "
-        f"which had the highest daily return in the portfolio today.\n\n"
+        f"The following are news articles published after market close about {ticker}, "
+        f"which posted the highest return in the portfolio today.\n\n"
         f"{combined}\n\n"
-        f"In 1-2 sentences, explain why {ticker} stock rose today. "
-        f"Be concise and direct — synthesize only the single most important reason in your own words. "
-        f"Do not copy phrases from the articles. Write naturally, like a person giving a quick explanation to a colleague. "
-        f"Then leave exactly one blank line, and write one concise hook sentence that draws the reader's curiosity. "
-        f"Keep it short and sharp. Sometimes pose it as a direct question, other times as a brief observation — "
-        f"choose whichever feels more natural for today's context. "
-        f"Strictly neutral: no buy/sell recommendations, no urgency to act. "
-        f"Sound like a knowledgeable market observer, not a news article. "
-        f"Do not add any labels or section headers. Output only plain text."
+        f"Generate two versions of a post about today's move. Output them in the exact format below — "
+        f"no labels beyond the markers, no extra commentary.\n\n"
+        f"---X---\n"
+        f"One sentence: the real driver behind today's move — not the headline, but what actually caused the reprice. "
+        f"Tight and specific. Write in your own words.\n"
+        f"[blank line]\n"
+        f"One sentence only: the sharpest unresolved tension or forward-looking question this move raises. "
+        f"Must be under 100 characters. Punchy, not academic. Neutral — no buy/sell signals.\n"
+        f"---END X---\n\n"
+        f"---LINKEDIN---\n"
+        f"Two to three sentences unpacking today's move. Start with the core driver, then briefly explain the mechanism — "
+        f"why does this matter structurally, not just for today? Make it feel like a knowledgeable colleague connecting the dots, "
+        f"not a news recap. Write in your own words.\n"
+        f"[blank line]\n"
+        f"One to two sentences that give the reader something to think about — a forward-looking tension, a broader implication, "
+        f"or a question worth sitting with. More reflective than provocative. Neutral — no buy/sell signals.\n"
+        f"---END LINKEDIN---"
     )
     models = ["gemma-4-26b-a4b-it", "gemma-4-31b-it"]
     last_err = None
@@ -196,7 +185,7 @@ def summarize_reason(ticker: str, articles: list[dict]) -> str:
         for attempt in range(3):
             try:
                 resp = _genai.models.generate_content(model=model, contents=prompt)
-                return resp.text.strip()
+                return _parse_versions(resp.text)
             except genai_errors.ServerError as e:
                 last_err = e
                 time.sleep(5 * (attempt + 1))
@@ -207,36 +196,24 @@ def summarize_reason(ticker: str, articles: list[dict]) -> str:
 
 # ── 메인 ──────────────────────────────────────────────────────────────────────
 def main():
-    # Usage: python pipeline.py [YYYY-MM-DD] [TICKER]
+    # Usage: python pipeline.py TICKER [YYYY-MM-DD]
     args = sys.argv[1:]
     date_arg   = next((a for a in args if re.match(r"\d{4}-\d{2}-\d{2}", a)), None)
     ticker_arg = next((a for a in args if not re.match(r"\d{4}-\d{2}-\d{2}", a)), None)
 
+    if not ticker_arg:
+        print("에러: 티커를 인자로 넘겨주세요. 예) python pipeline.py MU 2026-06-12")
+        sys.exit(1)
+
     trading_date = resolve_trading_date(date_arg)
-    print(f"\n[1/6] 거래일: {trading_date}")
+    ticker = ticker_arg.upper()
+    print(f"\n[1/5] 거래일: {trading_date}  티커: {ticker}")
 
-    if ticker_arg:
-        ticker = ticker_arg.upper()
-        print(f"[2/6] 지정 티커: {ticker}")
-        print(f"[3/6] 일간 수익률 계산...")
-        result = select_ticker([ticker], trading_date)
-        if result is None:
-            print(f"  -> {ticker} 선정 조건 미충족. 파이프라인 종료.")
-            return
-        ticker, ret = result
-    else:
-        print("[2/6] 포트폴리오 티커 조회...")
-        tickers = fetch_tickers()
-        print(f"  -> {len(tickers)}개 티커")
+    print(f"[2/5] 일간 수익률 계산...")
+    ret = get_daily_return(ticker, trading_date)
+    print(f"  -> {ret:+.2f}%")
 
-        print(f"[3/6] 종목 선정...")
-        result = select_ticker(tickers, trading_date)
-        if result is None:
-            print("  -> 조건을 만족하는 종목 없음. 파이프라인 종료.")
-            return
-        ticker, ret = result
-
-    print(f"[4/6] 키워드 추출...")
+    print(f"[3/5] 키워드 추출...")
     keywords = get_ticker_keywords(ticker)
     print(f"  -> {keywords}")
 
@@ -244,7 +221,7 @@ def main():
         browser = pw.chromium.launch(headless=True)
         page = browser.new_page(user_agent=UA)
 
-        print(f"[5/6] 뉴스 스크래핑 (최대 {NEWS_TARGET}개, Barrons 제외)...")
+        print(f"[4/5] 뉴스 스크래핑 (최대 {NEWS_TARGET}개)...")
         raw_news = scrape_news(page, ticker, NEWS_TARGET)
         print(f"  -> {len(raw_news)}개 수집")
 
@@ -255,7 +232,7 @@ def main():
         after_close = filter_after_close(filtered, trading_date)
         print(f"  -> {len(after_close)}개 통과")
 
-        print("[6/6] 본문 파싱...")
+        print("[4/5] 본문 파싱...")
         final = []
         for a in after_close:
             print(f"  파싱: {a['title'][:60]}...")
@@ -265,19 +242,23 @@ def main():
 
         browser.close()
 
-    print("[7/6] Gemma 요약 생성...")
+    print("[5/5] Gemma 요약 생성...")
     date_label = trading_date.strftime("%B %-d, %Y") if sys.platform != "win32" else trading_date.strftime("%B %#d, %Y")
     headline = f"${ticker} rose {ret:.2f}% on {date_label}. $BOBP index includes ${ticker}."
-    body_summary = summarize_reason(ticker, final) if final else "(기사 없음)"
-    summary = f"{headline}\n{body_summary}"
-    print(f"\n  {summary}")
+    empty = {"x": "(기사 없음)", "linkedin": "(기사 없음)"}
+    versions = summarize_reason(ticker, final) if final else empty
+    summary_x        = f"{headline}\n{versions['x']}"
+    summary_linkedin = f"{headline}\n{versions['linkedin']}"
+    print(f"\n[X]\n{summary_x}")
+    print(f"\n[LinkedIn]\n{summary_linkedin}")
 
     output = {
         "ticker": ticker,
         "trading_date": trading_date.isoformat(),
         "return_pct": round(ret, 2),
         "keywords": keywords,
-        "summary": summary,
+        "summary_x": summary_x,
+        "summary_linkedin": summary_linkedin,
         "articles": final,
     }
     out_path = f"{ticker.lower()}_{trading_date}_news.json"
