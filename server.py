@@ -4,6 +4,7 @@ Usage: python server.py  →  http://localhost:5000
 """
 
 import sys, os, glob, subprocess, json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date as date_type, timedelta
 from typing import Any, Optional
 
@@ -35,11 +36,7 @@ def resolve_trading_date() -> date_type:
     return prices.index[-1].date()
 
 
-def fetch_returns(trading_date: date_type) -> tuple[list[dict], date_type]:
-    res = http_req.get(f"{API_BASE}/bobp/last-portfolio-returns?exclude=BIL", timeout=15)
-    res.raise_for_status()
-    tickers = [it["ticker"] for it in res.json()["items"]]
-
+def fetch_returns(trading_date: date_type, tickers: list[str]) -> tuple[list[dict], date_type]:
     start = (trading_date - timedelta(days=20)).isoformat()
     end   = date_type.today().isoformat()
     raw   = yf.download(tickers, start=start, end=end, auto_adjust=True, progress=False)["Close"]
@@ -66,13 +63,44 @@ def fetch_returns(trading_date: date_type) -> tuple[list[dict], date_type]:
     return sorted(rows, key=lambda x: x["d1"], reverse=True), actual_date
 
 
-def load_ticker_names() -> dict[str, str]:
+_name_cache: dict[str, str] = {}
+
+def _names_from_yfinance(tickers: list[str]) -> dict[str, str]:
+    missing = [t for t in tickers if t not in _name_cache]
+    if missing:
+        def get_name(ticker: str) -> tuple[str, str]:
+            try:
+                return ticker, yf.Ticker(ticker).info.get('shortName') or ticker
+            except Exception:
+                return ticker, ticker
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            for ticker, name in executor.map(get_name, missing):
+                _name_cache[ticker] = name
+    return {t: _name_cache.get(t, t) for t in tickers}
+
+
+def _portfolio_from_api() -> tuple[list[str], dict[str, str]]:
+    res = http_req.get(f"{API_BASE}/bobp/last-portfolio-returns?exclude=BIL", timeout=15)
+    res.raise_for_status()
+    tickers = [it["ticker"] for it in res.json()["items"]]
+    return tickers, _names_from_yfinance(tickers)
+
+
+def _portfolio_from_excel() -> tuple[list[str], dict[str, str]]:
     files = glob.glob(os.path.join(XLSX_DIR, "*.xlsx"))
     if not files:
-        return {}
+        return [], {}
     df   = pd.read_excel(files[0], header=None)
     data = df.iloc[14:].dropna(subset=[1])
-    return {str(row[1]).strip(): str(row[2]).strip() for _, row in data.iterrows()}
+    tickers = [str(row[1]).strip() for _, row in data.iterrows()]
+    names   = {str(row[1]).strip(): str(row[2]).strip() for _, row in data.iterrows()}
+    return tickers, names
+
+
+def load_portfolio() -> tuple[list[str], dict[str, str]]:
+    if os.environ.get("NAME_SOURCE", "api") == "excel":
+        return _portfolio_from_excel()
+    return _portfolio_from_api()
 
 
 def pick_highlight(rows: list[dict]) -> str | None:
@@ -99,8 +127,8 @@ def portfolio(date: Optional[str] = Query(None)):
             trading_date = latest_date
     else:
         trading_date = latest_date
-    rows, actual_date = fetch_returns(trading_date)
-    names             = load_ticker_names()
+    tickers, names    = load_portfolio()
+    rows, actual_date = fetch_returns(trading_date, tickers)
     highlight         = pick_highlight(rows)
     return {
         "trading_date": str(actual_date),
@@ -116,7 +144,11 @@ def get_env():
     load_dotenv(ENV_PATH, override=True)
     key    = os.environ.get("GEMINI_API_KEY", "")
     masked = (key[:6] + "••••" + key[-4:]) if len(key) > 10 else ("••••••••" if key else "")
-    return {"GEMINI_API_KEY_MASKED": masked, "has_key": bool(key)}
+    return {
+        "GEMINI_API_KEY_MASKED": masked,
+        "has_key": bool(key),
+        "NAME_SOURCE": os.environ.get("NAME_SOURCE", "api"),
+    }
 
 
 @app.post("/api/env")
@@ -154,7 +186,7 @@ def pipeline_result_by_date(date: str = Query(...)):
 
 @app.post("/api/pipeline/run")
 def run_pipeline(body: PipelineBody):
-    args = [sys.executable, "-u", "pipeline.py"]
+    args = [sys.executable, "-u", os.path.join(BASE_DIR, "pipeline", "pipeline.py")]
     if body.date:
         args.append(body.date)
     if body.ticker:

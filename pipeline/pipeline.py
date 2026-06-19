@@ -1,10 +1,12 @@
 """
 Pipeline: 포트폴리오 최고 수익률 티커 → 뉴스 수집 → 필터링 → 본문 파싱
-Usage: python pipeline.py [YYYY-MM-DD]
-  날짜 생략 시 가장 최근 평일 기준
+Usage: python pipeline.py TICKER [YYYY-MM-DD]
 """
 
-import sys, os, re, json, urllib.request
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import re, json, urllib.request
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 

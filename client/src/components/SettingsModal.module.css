@@ -21,3 +21,10 @@
 .hint { font-size: 11px; color: #8a9ab0; margin-top: 6px; }
 .msg  { font-size: 12px; color: #0a9e5c; margin-top: 8px; }
 .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+
+.radioGroup { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+.radioLabel {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: #2a3a50; cursor: pointer;
+  text-transform: none; letter-spacing: 0;
+}
